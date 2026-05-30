@@ -5,6 +5,11 @@ Custom U-Boot build for [Whisplay HAT](https://github.com/PiSugar/Whisplay) that
 ## Supported Hardware
 
 - Raspberry Pi Zero 2W (BCM2837)
+- Raspberry Pi 3 Model B/B+ (BCM2837)
+- Raspberry Pi 4 Model B (BCM2711)
+- Raspberry Pi CM4 (BCM2711)
+- Raspberry Pi 5 (BCM2712 + RP1)
+- Raspberry Pi CM5 (BCM2712 + RP1)
 
 ## What It Does
 
@@ -22,7 +27,7 @@ If the BMP file is not present on the boot partition, U-Boot skips logo display 
 sudo apt-get install gcc-aarch64-linux-gnu make git bison flex libssl-dev
 ```
 
-### Build
+### Build (generic, supports Pi 3/Zero2W/4/CM4)
 
 ```bash
 git clone https://github.com/PiSugar/whisplay-u-boot.git
@@ -30,12 +35,17 @@ cd whisplay-u-boot
 bash build.sh
 ```
 
-The output binary is at `output/u-boot-whisplay-zero2w.bin`.
+The output binary is at `output/u-boot-whisplay-rpi-arm64.bin`.
 
-### Cross-compile on another Pi (e.g. CM5)
+### Build for a specific board (Pi Zero 2W only, with embedded DTB)
 
 ```bash
-# On aarch64 Pi, native compile works:
+DEFCONFIG=whisplay_zero2w_defconfig bash build.sh
+```
+
+### Native compile on aarch64 Pi
+
+```bash
 CROSS_COMPILE="" bash build.sh
 ```
 
@@ -44,14 +54,14 @@ CROSS_COMPILE="" bash build.sh
 1. Copy the binary and logo BMP to the boot partition:
 
 ```bash
-sudo cp output/u-boot-whisplay-zero2w.bin /boot/firmware/
+sudo cp output/u-boot-whisplay-rpi-arm64.bin /boot/firmware/
 sudo cp logo_lcd_240_280_rgb565.bmp /boot/firmware/
 ```
 
 2. Edit `/boot/firmware/config.txt`, add at the top:
 
 ```
-kernel=u-boot-whisplay-zero2w.bin
+kernel=u-boot-whisplay-rpi-arm64.bin
 ```
 
 3. Reboot. The logo should appear within ~500ms of power-on.
@@ -65,8 +75,14 @@ kernel=u-boot-whisplay-zero2w.bin
 
 ## How It Works
 
-- Uses **direct BCM2835 SPI register access** (no U-Boot DM/DTS dependency) for maximum reliability
-- SPI clock: 62.5 MHz (core_clk / 4)
+- Uses **direct SPI register access** (no U-Boot DM/DTS dependency) for maximum reliability
+- Auto-detects SoC via ARM MIDR register:
+  - Cortex-A53 → BCM2837 (peripheral base `0x3F000000`)
+  - Cortex-A72 → BCM2711 (peripheral base `0xFE000000`)
+  - Cortex-A76 → BCM2712 (RP1 via PCIe BAR at `0x1F00000000`)
+- SPI clock: core_clk / 4 (≈62.5 MHz on Pi 3/Zero2W, ≈125 MHz on Pi 4, ≈50 MHz on Pi 5)
+- Pi 5/CM5: uses RP1 DesignWare DW_apb_ssi SPI + RIO GPIO via PCIe-mapped registers
+- Does **not** set `bootargs` — preserves firmware DTB cmdline (no hardcoded PARTUUID)
 - GPIO pin mapping (BCM numbering):
   - DC: GPIO 27
   - RST: GPIO 4
@@ -78,13 +94,14 @@ kernel=u-boot-whisplay-zero2w.bin
 ```
 ├── build.sh                  # Automated build script
 ├── cmd/
-│   └── cmd_show_logo.c      # U-Boot show_logo command
+│   └── cmd_show_logo.c      # U-Boot show_logo command (BCM2837/2711/2712+RP1)
 ├── configs/
-│   └── whisplay_zero2w_defconfig  # U-Boot defconfig for Pi Zero 2W
+│   ├── whisplay_rpi_arm64_defconfig  # Generic (Pi 3/Zero2W/4/CM4/5/CM5)
+│   └── whisplay_zero2w_defconfig     # Pi Zero 2W specific (embedded DTB)
 ├── dts-patches/
-│   └── bcm2837-rpi-zero-2-w.dts  # Modified DTS (SPI enabled, no st7789v node)
+│   └── bcm2837-rpi-zero-2-w.dts  # Modified DTS (for zero2w_defconfig only)
 └── output/                   # Build output (generated)
-    └── u-boot-whisplay-zero2w.bin
+    └── u-boot-whisplay-rpi-arm64.bin
 ```
 
 ## Reverting to Normal Boot
