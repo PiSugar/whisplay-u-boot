@@ -16,3 +16,6 @@ Icon
 .Trashes
 .VolumeIcon.icns
 .com.apple.timemachine.donotpresent
+# Build output
+output/
+u-boot/
