@@ -19,6 +19,7 @@
 #include <linux/delay.h>
 #include <malloc.h>
 #include <mapmem.h>
+#include <time.h>
 #include <asm/io.h>
 #include <asm/global_data.h>
 
@@ -65,7 +66,8 @@ enum whisplay_platform {
 #define RP1_FUNCSEL_SYS_RIO     5   /* a5 = SYS_RIO */
 #define RP1_FUNCSEL_NULL        31
 #define RP1_CTRL_MASK_FUNCSEL   0x1F
-#define RP1_PADS_MASK_OUTPUT    (RP1_PAD_OD | RP1_PAD_IE)
+#define RP1_CTRL_MASK_OUTOVER   (0x3 << 12)
+#define RP1_CTRL_MASK_OEOVER    (0x3 << 14)
 
 /* RP1 RIO: output register with atomic SET/CLR */
 #define RP1_RIO_OUT             0x00
@@ -77,7 +79,10 @@ enum whisplay_platform {
 #define RP1_PAD_GPIO(pin)       (0x04 + (pin) * 4)
 #define RP1_PAD_OD              (1 << 7)  /* output disable */
 #define RP1_PAD_IE              (1 << 6)  /* input enable */
+#define RP1_PAD_SCHMITT         (1 << 1)
+#define RP1_PAD_DRIVE_4MA       (0x1 << 4)
 #define RP1_PAD_DRIVE_8MA       (0x2 << 4)
+#define RP1_PAD_DRIVE_12MA      (0x3 << 4)
 #define RP1_PAD_SLEWFAST        (1 << 0)
 
 /* RP1 DW_apb_ssi SPI registers */
@@ -99,11 +104,18 @@ enum whisplay_platform {
 #define DW_SPI_SR_TFE           (1 << 2)
 #define DW_SPI_SR_RFNE          (1 << 3)
 
+/* RP1 uses the DW_apb_ssi v4 32-bit CTRLR0 layout. */
+#define DW_SPI_CTRLR0_DFS32(n)  (((n) - 1) << 16)
+#define DW_SPI_CTRLR0_TMOD_TO   (1 << 8)
+
 /* ===== Whisplay hardware definitions ===== */
 /* Whisplay RGB LED (BCM/RP1 GPIO numbers) */
-#define WHISPLAY_GPIO_LED_R     23
-#define WHISPLAY_GPIO_LED_G     25
-#define WHISPLAY_GPIO_LED_B     24
+#define WHISPLAY_GPIO_LED_R     25
+#define WHISPLAY_GPIO_LED_G     24
+#define WHISPLAY_GPIO_LED_B     23
+#define WHISPLAY_GPIO_CS        8
+#define WHISPLAY_GPIO_MOSI      10
+#define WHISPLAY_GPIO_SCLK      11
 #define WHISPLAY_GPIO_RST       4
 #define WHISPLAY_GPIO_BL        22
 #define WHISPLAY_GPIO_DC        27
@@ -118,6 +130,25 @@ static void __iomem *gpio_base;
 static void __iomem *spi_base;
 static void __iomem *rio_base;   /* RP1 only */
 static void __iomem *pads_base;  /* RP1 only */
+static void __iomem *sysinfo_base; /* RP1 only */
+
+static void env_set_hex32(const char *var, uint32_t val)
+{
+	char buf[11];
+	static const char hex[] = "0123456789abcdef";
+
+	buf[0] = '0';
+	buf[1] = 'x';
+	for (int i = 0; i < 8; i++)
+		buf[2 + i] = hex[(val >> (28 - i * 4)) & 0xf];
+	buf[10] = '\0';
+	env_set(var, buf);
+}
+
+static void whisplay_mark_ms(const char *var, ulong base_ms)
+{
+	env_set_ulong(var, get_timer(base_ms));
+}
 
 /* ===== Platform detection ===== */
 static enum whisplay_platform detect_platform(void)
@@ -169,19 +200,30 @@ static void bcm_gpio_out(int pin, int val)
 static void rp1_gpio_set_funcsel(int pin, int funcsel)
 {
 	void __iomem *ctrl = gpio_base + RP1_GPIO_CTRL(pin);
+	uint32_t val = readl(ctrl);
 
-	writel(RP1_CTRL_MASK_FUNCSEL, ctrl + RP1_RIO_CLR_OFFSET);
-	writel(funcsel & RP1_CTRL_MASK_FUNCSEL, ctrl + RP1_RIO_SET_OFFSET);
+	val &= ~(RP1_CTRL_MASK_FUNCSEL | RP1_CTRL_MASK_OUTOVER |
+		 RP1_CTRL_MASK_OEOVER);
+	val |= funcsel & RP1_CTRL_MASK_FUNCSEL;
+	writel(val, ctrl);
+}
+
+static void rp1_gpio_set_pad(int pin, bool fast)
+{
+	void __iomem *pad = pads_base + RP1_PAD_GPIO(pin);
+	uint32_t val = RP1_PAD_IE | RP1_PAD_SCHMITT;
+
+	if (fast)
+		val |= RP1_PAD_DRIVE_12MA | RP1_PAD_SLEWFAST;
+	else
+		val |= RP1_PAD_DRIVE_4MA;
+
+	writel(val, pad);
 }
 
 static void rp1_gpio_set_output(int pin)
 {
-	void __iomem *pad = pads_base + RP1_PAD_GPIO(pin);
-
-	/* Enable pad output: clear OD[7] and IE[6] via atomic clr */
-	writel(RP1_PAD_DRIVE_8MA | RP1_PAD_SLEWFAST, pad);
-	writel(RP1_PADS_MASK_OUTPUT, pad + RP1_RIO_CLR_OFFSET);
-
+	rp1_gpio_set_pad(pin, false);
 	rp1_gpio_set_funcsel(pin, RP1_FUNCSEL_SYS_RIO);
 	writel(1 << pin, rio_base + RP1_RIO_OE + RP1_RIO_SET_OFFSET);
 }
@@ -192,6 +234,28 @@ static void rp1_gpio_out(int pin, int val)
 		writel(1 << pin, rio_base + RP1_RIO_OUT + RP1_RIO_SET_OFFSET);
 	else
 		writel(1 << pin, rio_base + RP1_RIO_OUT + RP1_RIO_CLR_OFFSET);
+}
+
+static void rp1_capture_gpio_diag(const char *prefix, int pin)
+{
+	char name[32];
+
+	snprintf(name, sizeof(name), "%s_ctrl", prefix);
+	env_set_hex32(name, readl(gpio_base + RP1_GPIO_CTRL(pin)));
+	snprintf(name, sizeof(name), "%s_pad", prefix);
+	env_set_hex32(name, readl(pads_base + RP1_PAD_GPIO(pin)));
+}
+
+static void rp1_capture_rio_diag(const char *suffix)
+{
+	char name[32];
+
+	snprintf(name, sizeof(name), "whisplay_rio_out_%s", suffix);
+	env_set_hex32(name, readl(rio_base + RP1_RIO_OUT));
+	snprintf(name, sizeof(name), "whisplay_rio_oe_%s", suffix);
+	env_set_hex32(name, readl(rio_base + RP1_RIO_OE));
+	snprintf(name, sizeof(name), "whisplay_rio_in_%s", suffix);
+	env_set_hex32(name, readl(rio_base + 0x08));
 }
 
 /* ===== Unified GPIO abstraction ===== */
@@ -256,45 +320,42 @@ static void bcm_spi_transfer(const uint8_t *tx, size_t len)
 /* ===== RP1 DW_apb_ssi SPI ===== */
 static void rp1_spi_init(void)
 {
-	/* SPI0 on GPIO 8-11 (funcsel = 0) */
-	for (int pin = 8; pin <= 11; pin++)
-		rp1_gpio_set_funcsel(pin, RP1_FUNCSEL_SPI0);
-
-	writel(0, spi_base + DW_SPI_SSIENR);
-	writel(0x0007, spi_base + DW_SPI_CTRLR0);
-	writel(10, spi_base + DW_SPI_BAUDR); /* 200MHz / 10 = 20MHz */
-	writel(0, spi_base + DW_SPI_TXFTLR);
-	writel(0, spi_base + DW_SPI_RXFTLR);
-	writel(1, spi_base + DW_SPI_SER);
-	writel(1, spi_base + DW_SPI_SSIENR);
+	/*
+	 * Keep a direct GPIO SPI path for BCM2712. It is slower than the RP1
+	 * DW SPI block, but is independent of early clock/reset sequencing.
+	 */
+	gpio_init_output(WHISPLAY_GPIO_CS);
+	gpio_init_output(WHISPLAY_GPIO_MOSI);
+	gpio_init_output(WHISPLAY_GPIO_SCLK);
+	gpio_set(WHISPLAY_GPIO_CS, 1);
+	gpio_set(WHISPLAY_GPIO_SCLK, 0);
+	gpio_set(WHISPLAY_GPIO_MOSI, 0);
 }
 
 static void rp1_spi_transfer(const uint8_t *tx, size_t len)
 {
-	unsigned long loops = 0;
-	size_t tx_idx = 0, rx_idx = 0;
+	uint32_t cs = 1 << WHISPLAY_GPIO_CS;
+	uint32_t mosi = 1 << WHISPLAY_GPIO_MOSI;
+	uint32_t sclk = 1 << WHISPLAY_GPIO_SCLK;
+	void __iomem *out_set = rio_base + RP1_RIO_OUT + RP1_RIO_SET_OFFSET;
+	void __iomem *out_clr = rio_base + RP1_RIO_OUT + RP1_RIO_CLR_OFFSET;
 
-	writel(0, spi_base + DW_SPI_SSIENR);
-	writel(1, spi_base + DW_SPI_SSIENR);
+	writel(cs, out_clr);
 
-	while (rx_idx < len) {
-		if (++loops > SPI_POLL_MAX)
-			return;
-		uint32_t sr = readl(spi_base + DW_SPI_SR);
-		if ((sr & DW_SPI_SR_TFNF) && tx_idx < len) {
-			writel(tx[tx_idx], spi_base + DW_SPI_DR);
-			tx_idx++;
-		}
-		if (sr & DW_SPI_SR_RFNE) {
-			(void)readl(spi_base + DW_SPI_DR);
-			rx_idx++;
+	for (size_t i = 0; i < len; i++) {
+		uint8_t val = tx[i];
+
+		for (int bit = 7; bit >= 0; bit--) {
+			if (val & BIT(bit))
+				writel(mosi, out_set);
+			else
+				writel(mosi, out_clr);
+			writel(sclk, out_set);
+			writel(sclk, out_clr);
 		}
 	}
-	loops = 0;
-	while (readl(spi_base + DW_SPI_SR) & DW_SPI_SR_BUSY) {
-		if (++loops > SPI_POLL_MAX)
-			return;
-	}
+
+	writel(cs, out_set);
 }
 
 /* ===== Unified SPI abstraction ===== */
@@ -406,9 +467,9 @@ static void status_led_init(void)
 	gpio_init_output(WHISPLAY_GPIO_LED_R);
 	gpio_init_output(WHISPLAY_GPIO_LED_G);
 	gpio_init_output(WHISPLAY_GPIO_LED_B);
-	gpio_set(WHISPLAY_GPIO_LED_R, 0);
-	gpio_set(WHISPLAY_GPIO_LED_G, 0);
-	gpio_set(WHISPLAY_GPIO_LED_B, 0);
+	gpio_set(WHISPLAY_GPIO_LED_R, 1);
+	gpio_set(WHISPLAY_GPIO_LED_G, 1);
+	gpio_set(WHISPLAY_GPIO_LED_B, 1);
 }
 
 static void status_led_set(int r, int g, int b)
@@ -416,9 +477,9 @@ static void status_led_set(int r, int g, int b)
 	if (platform != PLATFORM_BCM2712)
 		return;
 
-	gpio_set(WHISPLAY_GPIO_LED_R, r);
-	gpio_set(WHISPLAY_GPIO_LED_G, g);
-	gpio_set(WHISPLAY_GPIO_LED_B, b);
+	gpio_set(WHISPLAY_GPIO_LED_R, !r);
+	gpio_set(WHISPLAY_GPIO_LED_G, !g);
+	gpio_set(WHISPLAY_GPIO_LED_B, !b);
 }
 
 static int hw_init_peripherals(void)
@@ -428,7 +489,9 @@ static int hw_init_peripherals(void)
 		rio_base = map_sysmem(RP1_BAR_BASE + RP1_SYS_RIO0_OFFSET, 0x4000);
 		pads_base = map_sysmem(RP1_BAR_BASE + RP1_PADS_BANK0_OFFSET, 0x100);
 		spi_base = map_sysmem(RP1_BAR_BASE + RP1_SPI0_OFFSET, 0x100);
-		if (!gpio_base || !rio_base || !pads_base || !spi_base)
+		sysinfo_base = map_sysmem(RP1_BAR_BASE + RP1_SYSINFO_OFFSET, 0x10);
+		if (!gpio_base || !rio_base || !pads_base || !spi_base ||
+		    !sysinfo_base)
 			return -1;
 	} else {
 		unsigned long base = bcm_peri_base();
@@ -445,24 +508,44 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 		     char *const argv[])
 {
 	int result;
+	ulong t0 = get_timer(0);
+
+	env_set("whisplay_show_logo_marker", "1");
+	whisplay_mark_ms("whisplay_t_start", t0);
 
 	platform = detect_platform();
+	whisplay_mark_ms("whisplay_t_detect", t0);
 	if (platform == PLATFORM_UNKNOWN)
 		return CMD_RET_SUCCESS;
+
+	if (platform == PLATFORM_BCM2712) {
+		run_command("pci enum", 0);
+		env_set("whisplay_pci_enum_marker", "1");
+		whisplay_mark_ms("whisplay_t_pci", t0);
+	}
 
 	/* Pi 5: init RP1 GPIO early so status LED confirms MMIO works */
 	if (platform == PLATFORM_BCM2712) {
 		if (hw_init_peripherals() < 0)
 			return CMD_RET_SUCCESS;
+		env_set("whisplay_hw_marker", "1");
+		whisplay_mark_ms("whisplay_t_hw", t0);
+		env_set_hex32("whisplay_chip", readl(sysinfo_base));
 		status_led_init();
+		rp1_capture_rio_diag("after_led_init");
+		rp1_capture_gpio_diag("whisplay_ledr", WHISPLAY_GPIO_LED_R);
 		status_led_set(1, 0, 0); /* red: RP1 mapped */
+		rp1_capture_rio_diag("after_led_red");
 	}
 
 	result = run_command(
 		"fatload mmc 0:1 ${loadaddr} /logo_lcd_240_280_rgb565.bmp",
 		0);
-	if (result != 0)
+	whisplay_mark_ms("whisplay_t_fatload", t0);
+	if (result != 0) {
 		return CMD_RET_SUCCESS;
+	}
+	env_set("whisplay_logo_load_marker", "1");
 
 	char *addr_str = env_get("loadaddr");
 	if (!addr_str)
@@ -479,31 +562,34 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 
 	if (bpp != 16 || bmp_width != WHISPLAY_LCD_WIDTH ||
 	    (bmp_height != (int32_t)WHISPLAY_LCD_HEIGHT &&
-	     bmp_height != -(int32_t)WHISPLAY_LCD_HEIGHT))
+	     bmp_height != -(int32_t)WHISPLAY_LCD_HEIGHT)) {
 		return CMD_RET_SUCCESS;
+	}
+	env_set("whisplay_logo_valid_marker", "1");
+	whisplay_mark_ms("whisplay_t_parse", t0);
 
 	uint32_t data_offset = le32_to_cpu(bmp->header.data_offset);
-	uint16_t *pixels = (uint16_t *)(bmp_addr + data_offset);
+	uint16_t *bmp_pixels = (uint16_t *)(bmp_addr + data_offset);
 	uint32_t pixel_count = WHISPLAY_LCD_WIDTH * WHISPLAY_LCD_HEIGHT;
-	void *pixel_buf = NULL;
+	uint16_t *pixels = malloc(pixel_count * 2);
+	if (!pixels)
+		return CMD_RET_SUCCESS;
 
-	if (bmp_height < 0) {
-		pixel_buf = malloc(pixel_count * 2);
-		if (!pixel_buf)
-			return CMD_RET_SUCCESS;
-		uint16_t *dst = (uint16_t *)pixel_buf;
-		for (int row = 0; row < WHISPLAY_LCD_HEIGHT; row++) {
-			uint16_t *src_row = pixels +
-				(WHISPLAY_LCD_HEIGHT - 1 - row) * WHISPLAY_LCD_WIDTH;
-			for (int col = 0; col < WHISPLAY_LCD_WIDTH; col++)
-				dst[row * WHISPLAY_LCD_WIDTH + col] =
-					__builtin_bswap16(src_row[col]);
-		}
-		pixels = (uint16_t *)pixel_buf;
-	} else {
-		for (uint32_t i = 0; i < pixel_count; i++)
-			pixels[i] = __builtin_bswap16(pixels[i]);
+	for (uint32_t row = 0; row < WHISPLAY_LCD_HEIGHT; row++) {
+		uint16_t *src_row;
+
+		if (bmp_height < 0)
+			src_row = bmp_pixels +
+				(WHISPLAY_LCD_HEIGHT - 1 - row) *
+				WHISPLAY_LCD_WIDTH;
+		else
+			src_row = bmp_pixels + row * WHISPLAY_LCD_WIDTH;
+
+		for (uint32_t col = 0; col < WHISPLAY_LCD_WIDTH; col++)
+			pixels[row * WHISPLAY_LCD_WIDTH + col] =
+				__builtin_bswap16(src_row[col]);
 	}
+	whisplay_mark_ms("whisplay_t_copy", t0);
 
 	/* Initialize hardware only after BMP is confirmed valid */
 	if (platform != PLATFORM_BCM2712 && hw_init_peripherals() < 0)
@@ -512,23 +598,30 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	gpio_init_output(WHISPLAY_GPIO_DC);
 	gpio_init_output(WHISPLAY_GPIO_RST);
 	gpio_init_output(WHISPLAY_GPIO_BL);
-	gpio_set(WHISPLAY_GPIO_BL, 1);
+	gpio_set(WHISPLAY_GPIO_BL, 0);
+	rp1_capture_rio_diag("before_lcd");
+	rp1_capture_gpio_diag("whisplay_bl", WHISPLAY_GPIO_BL);
+	rp1_capture_gpio_diag("whisplay_cs", WHISPLAY_GPIO_CS);
 
 	spi_hw_init();
+	whisplay_mark_ms("whisplay_t_spi_init", t0);
 	lcd_reset();
 	lcd_init_seq();
+	whisplay_mark_ms("whisplay_t_lcd_init", t0);
 
 	lcd_set_window(WHISPLAY_LCD_X_OFFSET, WHISPLAY_LCD_Y_OFFSET,
 		       WHISPLAY_LCD_WIDTH, WHISPLAY_LCD_HEIGHT);
 	lcd_draw_pixels((const uint8_t *)pixels, pixel_count * 2);
+	whisplay_mark_ms("whisplay_t_draw", t0);
+	env_set("whisplay_logo_done_marker", "1");
+	whisplay_mark_ms("whisplay_t_done", t0);
 
-	gpio_set(WHISPLAY_GPIO_BL, 0);
 	if (platform == PLATFORM_BCM2712)
-		status_led_set(0, 0, 1); /* green: logo done */
+		status_led_set(0, 1, 0); /* green: logo done */
 
 out:
-	if (pixel_buf)
-		free(pixel_buf);
+	if (pixels)
+		free(pixels);
 	return CMD_RET_SUCCESS;
 }
 

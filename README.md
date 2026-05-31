@@ -8,16 +8,14 @@ Custom U-Boot build for [Whisplay HAT](https://github.com/PiSugar/Whisplay) that
 - Raspberry Pi 3 Model B/B+ (BCM2837)
 - Raspberry Pi 4 Model B (BCM2711)
 - Raspberry Pi CM4 (BCM2711)
-- Raspberry Pi 5 (BCM2712) — boot supported, logo display pending RP1 PCIe upstreaming
-- Raspberry Pi CM5 (BCM2712) — boot supported, logo display pending RP1 PCIe upstreaming
+- Raspberry Pi 5 (BCM2712)
+- Raspberry Pi CM5 (BCM2712)
 
 ## What It Does
 
 1. Pi firmware loads U-Boot instead of the kernel directly
 2. U-Boot displays `logo_lcd_240_280_rgb565.bmp` from the boot partition on the Whisplay SPI LCD (ST7789, 240×280)
 3. U-Boot then boots the Linux kernel normally
-
-On Pi 5/CM5, logo display is gracefully skipped (RP1 SPI driver not yet available in mainline U-Boot). Boot proceeds normally.
 
 If the BMP file is not present on the boot partition, U-Boot skips logo display entirely — no GPIO or SPI pins are touched, and boot proceeds normally.
 
@@ -84,8 +82,10 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 - Auto-detects SoC via ARM MIDR register:
   - Cortex-A53 (0xD03) → BCM2837 (peripheral base `0x3F000000`)
   - Cortex-A72 (0xD08) → BCM2711 (peripheral base `0xFE000000`)
-  - Cortex-A76 (0xD0B) → BCM2712 (skip logo, RP1 SPI not yet supported)
-- SPI clock: core_clk / 4 (≈62.5 MHz on Pi 3/Zero2W, ≈125 MHz on Pi 4)
+  - Cortex-A76 (0xD0B) → BCM2712 (RP1 GPIO + DW_apb_ssi SPI)
+- SPI clock:
+  - BCM2837/BCM2711: core_clk / 4 (≈62.5 MHz on Pi 3/Zero2W, ≈125 MHz on Pi 4)
+  - BCM2712: RP1 SPI0 at ≈20 MHz
 - Custom BOOTCOMMAND handles both Pi 5 (`kernel_2712.img`) and Pi 3/4 (`kernel8.img`)
 - `CONFIG_BOOTDELAY=-2` prevents hang on Pi 5 (UART RX floating issue)
 - `kernel_comp_addr_r`/`kernel_comp_size` set for gzip-compressed kernel images
@@ -122,7 +122,6 @@ Remove or comment out the `kernel=` and `uart_2ndstage=` lines in `/boot/firmwar
 
 ## Known Issues
 
-- **Pi 5/CM5**: Logo display not yet supported (RP1 SPI/GPIO requires PCIe driver patches not yet in mainline U-Boot). Boot works normally.
 - **Pi 5/CM5**: Boot takes ~10s longer due to `pci enum` timeout in PREBOOT.
 
 ## License

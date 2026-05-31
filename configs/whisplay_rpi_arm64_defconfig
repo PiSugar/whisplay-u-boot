@@ -1,6 +1,7 @@
 CONFIG_ARM=y
 CONFIG_POSITION_INDEPENDENT=y
 CONFIG_ARCH_BCM283X=y
+CONFIG_BCM2712=y
 CONFIG_TARGET_RPI_ARM64=y
 CONFIG_ENV_SIZE=0x4000
 CONFIG_DEFAULT_DEVICE_TREE="bcm2711-rpi-4-b"
@@ -16,9 +17,9 @@ CONFIG_BOOTDELAY=-2
 CONFIG_USE_PREBOOT=y
 CONFIG_PREBOOT="show_logo"
 CONFIG_USE_BOOTCOMMAND=y
-CONFIG_BOOTCOMMAND="setenv kernel_comp_addr_r 0x0A000000; setenv kernel_comp_size 0x12000000; if fatload mmc 0:1 ${kernel_addr_r} kernel_2712.img; then true; else fatload mmc 0:1 ${kernel_addr_r} kernel8.img; fi; if fatload mmc 0:1 ${ramdisk_addr_r} initramfs_2712; then true; else fatload mmc 0:1 ${ramdisk_addr_r} initramfs8; fi; setenv initrd_size ${filesize}; booti ${kernel_addr_r} ${ramdisk_addr_r}:${initrd_size} ${fdt_addr}"
+CONFIG_BOOTCOMMAND="setenv kernel_comp_addr_r 0x0A000000; setenv kernel_comp_size 0x12000000; if fatload mmc 0:1 ${kernel_addr_r} kernel_2712.img; then true; else fatload mmc 0:1 ${kernel_addr_r} kernel8.img; fi; if fatload mmc 0:1 ${ramdisk_addr_r} initramfs_2712; then true; else fatload mmc 0:1 ${ramdisk_addr_r} initramfs8; fi; setenv initrd_size ${filesize}; if fdt addr ${fdt_addr}; then if fdt get value whisplay_bootargs /chosen bootargs; then setenv bootargs \"${whisplay_bootargs} whisplay_uboot_marker=1 whisplay_show_logo_marker=${whisplay_show_logo_marker} whisplay_pci_enum_marker=${whisplay_pci_enum_marker} whisplay_hw_marker=${whisplay_hw_marker} whisplay_logo_done_marker=${whisplay_logo_done_marker} whisplay_diag=${whisplay_chip},${whisplay_ledr_ctrl},${whisplay_ledr_pad},${whisplay_rio_out_after_led_red},${whisplay_rio_oe_after_led_red},${whisplay_rio_in_after_led_red},${whisplay_bl_ctrl},${whisplay_bl_pad},${whisplay_rio_out_before_lcd} whisplay_times=${whisplay_t_start},${whisplay_t_detect},${whisplay_t_pci},${whisplay_t_hw},${whisplay_t_fatload},${whisplay_t_parse},${whisplay_t_copy},${whisplay_t_spi_init},${whisplay_t_lcd_init},${whisplay_t_draw},${whisplay_t_done}\"; fi; fi; booti ${kernel_addr_r} ${ramdisk_addr_r}:${initrd_size} ${fdt_addr}"
 # CONFIG_BOOTSTD_BOOTCOMMAND is not set
-CONFIG_SYS_PBSIZE=1049
+CONFIG_SYS_PBSIZE=2048
 # CONFIG_DISPLAY_CPUINFO is not set
 # CONFIG_DISPLAY_BOARDINFO is not set
 CONFIG_MISC_INIT_R=y
@@ -28,6 +29,7 @@ CONFIG_CMD_MMC=y
 CONFIG_CMD_PCI=y
 CONFIG_CMD_USB=y
 CONFIG_CMD_FAT=y
+CONFIG_CMD_FS_UUID=y
 CONFIG_ENV_FAT_DEVICE_AND_PART="0:1"
 CONFIG_ENV_VARS_UBOOT_RUNTIME_CONFIG=y
 CONFIG_TFTP_TSIZE=y
@@ -39,6 +41,7 @@ CONFIG_MMC_SDHCI_BCM2835=y
 CONFIG_MMC_SDHCI_BCMSTB=y
 CONFIG_BCMGENET=y
 CONFIG_PCI_BRCMSTB=y
+CONFIG_PCI_PNP=y
 CONFIG_PINCTRL=y
 # CONFIG_PINCTRL_GENERIC is not set
 CONFIG_DM_RNG=y
@@ -61,4 +64,15 @@ CONFIG_SYS_WHITE_ON_BLACK=y
 CONFIG_VIDEO_BCM2835=y
 CONFIG_CONSOLE_SCROLL_LINES=10
 CONFIG_PHYS_TO_BUS=y
+CONFIG_RESET_BRCMSTB=y
+CONFIG_MFD_RP1=y
+CONFIG_RESET_RASPBERRYPI=y
+CONFIG_RESET_BRCMSTB_RESCAL=y
+CONFIG_MACB=y
+CONFIG_CLK=y
+CONFIG_CLK_RP1=y
+CONFIG_OF_REAL=y
+CONFIG_RP1_GPIO=y
+CONFIG_BOARD_LATE_INIT=y
+CONFIG_BOARD_TYPES=y
 # CONFIG_HEXDUMP is not set

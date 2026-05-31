@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UBOOT_VERSION="v2024.04"
-UBOOT_REPO="https://github.com/u-boot/u-boot.git"
-CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+UBOOT_VERSION="${UBOOT_VERSION:-v2024.04}"
+UBOOT_REPO="${UBOOT_REPO:-https://github.com/u-boot/u-boot.git}"
+CROSS_COMPILE="${CROSS_COMPILE-aarch64-linux-gnu-}"
 JOBS="${JOBS:-$(nproc)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/u-boot"
@@ -13,6 +13,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 DEFCONFIG="${DEFCONFIG:-whisplay_rpi_arm64_defconfig}"
 
 echo "=== Whisplay U-Boot Build ==="
+echo "U-Boot repo: ${UBOOT_REPO}"
 echo "U-Boot: ${UBOOT_VERSION}"
 echo "Defconfig: ${DEFCONFIG}"
 echo "Cross compiler: ${CROSS_COMPILE}gcc"
@@ -38,7 +39,8 @@ cp "${SCRIPT_DIR}/cmd/cmd_show_logo.c" "${BUILD_DIR}/cmd/"
 cp "${SCRIPT_DIR}/configs/"*.defconfig "${BUILD_DIR}/configs/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/configs/"*_defconfig "${BUILD_DIR}/configs/" 2>/dev/null || true
 
-if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ]; then
+if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ] && \
+   [ -d "${BUILD_DIR}/dts/upstream/src/arm/broadcom" ]; then
     cp "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" \
        "${BUILD_DIR}/dts/upstream/src/arm/broadcom/bcm2837-rpi-zero-2-w.dts"
 fi
@@ -51,7 +53,12 @@ if [ -d "${SCRIPT_DIR}/patches" ]; then
     for p in "${SCRIPT_DIR}/patches/"*.patch; do
         [ -f "$p" ] || continue
         echo "Applying $(basename "$p")..."
-        patch -p1 -N < "$p" || true
+        if patch -d "${BUILD_DIR}" -p1 --forward --dry-run --batch \
+            < "$p" >/dev/null 2>&1; then
+            patch -d "${BUILD_DIR}" -p1 --forward --batch < "$p"
+        else
+            echo "  already applied or not applicable, skipping"
+        fi
     done
 fi
 
