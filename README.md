@@ -51,6 +51,27 @@ CROSS_COMPILE="" bash build.sh
 
 ## Deployment
 
+### Install from a Raspberry Pi
+
+On a 64-bit Raspberry Pi OS system:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PiSugar/whisplay-u-boot/main/install.sh | bash
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PiSugar/whisplay-u-boot/main/install.sh | VERSION=v0.1.0 bash
+```
+
+The installer only runs on 64-bit Raspberry Pi Linux. It downloads
+`u-boot-whisplay-rpi-arm64.bin`, backs up `/boot/firmware/config.txt`, installs
+the binary, and sets `enable_uart=1`, `uart_2ndstage=1`, and
+`kernel=u-boot-whisplay-rpi-arm64.bin`.
+
+### Manual Install
+
 1. Copy the binary and logo BMP to the boot partition:
 
 ```bash
