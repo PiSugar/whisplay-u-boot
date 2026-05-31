@@ -1,0 +1,91 @@
+name: Release U-Boot
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and publish U-Boot
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} must match vMAJOR.MINOR.PATCH, for example v1.0.0."
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")"
+          if ! git merge-base --is-ancestor "${tag_commit}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${tag_commit}) is not on origin/main."
+            exit 1
+          fi
+          echo "TAG_COMMIT=${tag_commit}" >> "${GITHUB_ENV}"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            flex \
+            gcc-aarch64-linux-gnu \
+            libssl-dev \
+            make
+
+      - name: Build unified Raspberry Pi U-Boot
+        env:
+          DEFCONFIG: whisplay_rpi_arm64_defconfig
+          UBOOT_REPO: https://github.com/xen-troops/u-boot.git
+          UBOOT_VERSION: rpi5-2024.04-xt
+        run: bash build.sh
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp output/u-boot-whisplay-rpi-arm64.bin release/
+          sha256sum release/u-boot-whisplay-rpi-arm64.bin \
+            > release/u-boot-whisplay-rpi-arm64.bin.sha256
+          cat > release/RELEASE_NOTES.md <<EOF
+          Whisplay U-Boot release ${GITHUB_REF_NAME}
+
+          Source tag: ${GITHUB_REF_NAME}
+          Source commit: ${TAG_COMMIT}
+          U-Boot repo: https://github.com/xen-troops/u-boot.git
+          U-Boot branch: rpi5-2024.04-xt
+
+          Asset:
+          - u-boot-whisplay-rpi-arm64.bin
+          - u-boot-whisplay-rpi-arm64.bin.sha256
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              release/u-boot-whisplay-rpi-arm64.bin \
+              release/u-boot-whisplay-rpi-arm64.bin.sha256 \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              release/u-boot-whisplay-rpi-arm64.bin \
+              release/u-boot-whisplay-rpi-arm64.bin.sha256 \
+              --title "Whisplay U-Boot ${GITHUB_REF_NAME}" \
+              --notes-file release/RELEASE_NOTES.md
+          fi
