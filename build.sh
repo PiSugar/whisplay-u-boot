@@ -8,6 +8,7 @@ JOBS="${JOBS:-$(nproc)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/u-boot"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
+LOGO_BMP="${LOGO_BMP:-${SCRIPT_DIR}/img/logo_lcd_240_280_rgb565.bmp}"
 
 # Default: generic build for all Pi models (3/Zero2W/4/CM4/5/CM5)
 DEFCONFIG="${DEFCONFIG:-whisplay_rpi_arm64_defconfig}"
@@ -72,10 +73,15 @@ cp "${BUILD_DIR}/u-boot.bin" "${OUTPUT_DIR}/${OUTPUT_NAME}"
 echo ""
 echo "=== Build complete ==="
 echo "Output: ${OUTPUT_DIR}/${OUTPUT_NAME}"
+if [ -f "${LOGO_BMP}" ]; then
+    echo "Logo: ${LOGO_BMP}"
+else
+    echo "Logo not found at ${LOGO_BMP}"
+fi
 echo ""
 echo "Deploy to Pi:"
 echo "  sudo cp ${OUTPUT_DIR}/${OUTPUT_NAME} /boot/firmware/"
-echo "  sudo cp logo_lcd_240_280_rgb565.bmp /boot/firmware/"
+echo "  sudo cp ${LOGO_BMP} /boot/firmware/"
 echo "  Add to /boot/firmware/config.txt:"
 echo "    enable_uart=1"
 echo "    uart_2ndstage=1"

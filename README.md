@@ -14,10 +14,10 @@ Custom U-Boot build for [Whisplay HAT](https://github.com/PiSugar/Whisplay) that
 ## What It Does
 
 1. Pi firmware loads U-Boot instead of the kernel directly
-2. U-Boot displays `logo_lcd_240_280_rgb565.bmp` from the boot partition on the Whisplay SPI LCD (ST7789, 240×280)
+2. U-Boot displays `logo_lcd_240_280_rgb565.bmp` generated from `img/logo.png` on the Whisplay SPI LCD (ST7789, 240×280)
 3. U-Boot then boots the Linux kernel normally
 
-If the BMP file is not present on the boot partition, U-Boot skips logo display entirely — no GPIO or SPI pins are touched, and boot proceeds normally.
+If the generated BMP file is not present on the boot partition, U-Boot skips logo display entirely — no GPIO or SPI pins are touched, and boot proceeds normally.
 
 ## Building
 
@@ -35,7 +35,8 @@ cd whisplay-u-boot
 bash build.sh
 ```
 
-The output binary is at `output/u-boot-whisplay-rpi-arm64.bin`.
+The output binary is at `output/u-boot-whisplay-rpi-arm64.bin`. The boot logo
+BMP is already stored at `img/logo_lcd_240_280_rgb565.bmp`.
 
 ### Native compile on aarch64 Pi
 
@@ -70,7 +71,7 @@ the binary, and sets `enable_uart=1`, `uart_2ndstage=1`, and
 
 ```bash
 sudo cp output/u-boot-whisplay-rpi-arm64.bin /boot/firmware/
-sudo cp logo_lcd_240_280_rgb565.bmp /boot/firmware/
+sudo cp img/logo_lcd_240_280_rgb565.bmp /boot/firmware/
 ```
 
 2. Edit `/boot/firmware/config.txt`, add:
@@ -83,12 +84,15 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 
 3. Reboot. The logo should appear within ~500ms of power-on (Pi 3/4/Zero2W).
 
-## Boot Logo BMP Requirements
+## Boot Logo
 
-- Format: 16-bit RGB565 BMP (Windows 3.x format, BI_BITFIELDS compression)
+The source logo is `img/logo.png`. The generated U-Boot display asset is
+checked in as `img/logo_lcd_240_280_rgb565.bmp`.
+
+- Output format: 16-bit RGB565 BMP (Windows 3.x format, BI_BITFIELDS compression)
 - Resolution: 240×280 pixels
 - File name: `logo_lcd_240_280_rgb565.bmp`
-- Location: root of the boot FAT partition (`/boot/firmware/`)
+- Location on Pi: root of the boot FAT partition (`/boot/firmware/`)
 
 ## How It Works
 
@@ -119,6 +123,9 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 │   └── cmd_show_logo.c      # U-Boot show_logo command
 ├── configs/
 │   └── whisplay_rpi_arm64_defconfig  # Unified Pi 3/Zero2W/4/CM4/5/CM5 build
+├── img/
+│   ├── logo.png             # Source boot logo
+│   └── logo_lcd_240_280_rgb565.bmp  # Generated boot logo used by U-Boot
 └── output/                   # Build output (generated)
     └── u-boot-whisplay-rpi-arm64.bin
 ```

@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="${REPO:-PiSugar/whisplay-u-boot}"
 VERSION="${VERSION:-latest}"
 ASSET="${ASSET:-u-boot-whisplay-rpi-arm64.bin}"
+LOGO_ASSET="${LOGO_ASSET:-logo_lcd_240_280_rgb565.bmp}"
 BOOT_DIR="${BOOT_DIR:-}"
 
 usage() {
@@ -16,6 +17,7 @@ Usage:
 Environment:
   VERSION   GitHub release tag to install. Defaults to latest.
   BIN_URL   Override the binary download URL.
+  LOGO_URL  Override the logo BMP download URL.
   BOOT_DIR  Override boot partition mount point. Defaults to /boot/firmware,
             falling back to /boot.
 
@@ -101,14 +103,28 @@ else
     bin_url="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 fi
 
+if [[ -n "${LOGO_URL:-}" ]]; then
+    logo_url="${LOGO_URL}"
+elif [[ "${VERSION}" == "latest" ]]; then
+    logo_url="https://github.com/${REPO}/releases/download/latest/${LOGO_ASSET}"
+else
+    logo_url="https://github.com/${REPO}/releases/download/${VERSION}/${LOGO_ASSET}"
+fi
+
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 tmp_bin="${tmp_dir}/${ASSET}"
+tmp_logo="${tmp_dir}/${LOGO_ASSET}"
 
 info "Detected ${model}"
 info "Using boot partition ${BOOT_DIR}"
 info "Downloading ${bin_url}"
 download_with_fallback "${bin_url}" "${tmp_bin}"
+info "Downloading ${logo_url}"
+if ! download_with_fallback "${logo_url}" "${tmp_logo}"; then
+    info "Logo download failed; continuing without boot logo"
+    rm -f "${tmp_logo}"
+fi
 
 if [[ ! -s "${tmp_bin}" ]]; then
     die "downloaded binary is empty"
@@ -116,16 +132,25 @@ fi
 
 ts="$(date +%Y%m%d%H%M%S)"
 target_bin="${BOOT_DIR}/${ASSET}"
+target_logo="${BOOT_DIR}/${LOGO_ASSET}"
 
 info "Backing up boot files"
 ${SUDO} cp "${config_txt}" "${config_txt}.whisplay-${ts}.bak"
 if [[ -f "${target_bin}" ]]; then
     ${SUDO} cp "${target_bin}" "${target_bin}.whisplay-${ts}.bak"
 fi
+if [[ -f "${target_logo}" ]]; then
+    ${SUDO} cp "${target_logo}" "${target_logo}.whisplay-${ts}.bak"
+fi
 
 info "Installing ${ASSET}"
 ${SUDO} cp "${tmp_bin}" "${target_bin}"
 ${SUDO} chmod 0644 "${target_bin}"
+if [[ -s "${tmp_logo}" ]]; then
+    info "Installing ${LOGO_ASSET}"
+    ${SUDO} cp "${tmp_logo}" "${target_logo}"
+    ${SUDO} chmod 0644 "${target_logo}"
+fi
 
 set_config() {
     local key="$1"
@@ -150,8 +175,7 @@ sha256sum "${target_bin}" || true
 cat <<EOF
 
 Next steps:
-  1. Put logo_lcd_240_280_rgb565.bmp in ${BOOT_DIR} if you want the boot logo.
-  2. Reboot:
+  1. Reboot:
        sudo reboot
 
 To revert, restore:
