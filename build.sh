@@ -69,6 +69,9 @@ mkdir -p "${OUTPUT_DIR}"
 OUTPUT_NAME="u-boot-whisplay-rpi-arm64.bin"
 
 cp "${BUILD_DIR}/u-boot.bin" "${OUTPUT_DIR}/${OUTPUT_NAME}"
+if [ -f "${LOGO_BMP}" ]; then
+    cp "${LOGO_BMP}" "${OUTPUT_DIR}/"
+fi
 
 echo ""
 echo "=== Build complete ==="

@@ -61,8 +61,9 @@ curl -fsSL https://raw.githubusercontent.com/PiSugar/whisplay-u-boot/main/instal
 ```
 
 The installer only runs on 64-bit Raspberry Pi Linux. It downloads
-`u-boot-whisplay-rpi-arm64.bin`, backs up `/boot/firmware/config.txt`, installs
-the binary, and sets `enable_uart=1`, `uart_2ndstage=1`, and
+`u-boot-whisplay-rpi-arm64.bin` and `logo_lcd_240_280_rgb565.bmp` from the
+selected GitHub release assets, backs up `/boot/firmware/config.txt`, installs
+the files, and sets `enable_uart=1`, `uart_2ndstage=1`, and
 `kernel=u-boot-whisplay-rpi-arm64.bin`.
 
 ### Manual Install

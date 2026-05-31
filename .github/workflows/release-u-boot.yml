@@ -57,8 +57,11 @@ jobs:
           set -euo pipefail
           mkdir -p release
           cp output/u-boot-whisplay-rpi-arm64.bin release/
+          cp output/logo_lcd_240_280_rgb565.bmp release/
           sha256sum release/u-boot-whisplay-rpi-arm64.bin \
             > release/u-boot-whisplay-rpi-arm64.bin.sha256
+          sha256sum release/logo_lcd_240_280_rgb565.bmp \
+            > release/logo_lcd_240_280_rgb565.bmp.sha256
           cat > release/RELEASE_NOTES.md <<EOF
           Whisplay U-Boot release ${GITHUB_REF_NAME}
 
@@ -70,6 +73,8 @@ jobs:
           Asset:
           - u-boot-whisplay-rpi-arm64.bin
           - u-boot-whisplay-rpi-arm64.bin.sha256
+          - logo_lcd_240_280_rgb565.bmp
+          - logo_lcd_240_280_rgb565.bmp.sha256
           EOF
 
       - name: Publish GitHub release
@@ -81,11 +86,15 @@ jobs:
             gh release upload "${GITHUB_REF_NAME}" \
               release/u-boot-whisplay-rpi-arm64.bin \
               release/u-boot-whisplay-rpi-arm64.bin.sha256 \
+              release/logo_lcd_240_280_rgb565.bmp \
+              release/logo_lcd_240_280_rgb565.bmp.sha256 \
               --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
               release/u-boot-whisplay-rpi-arm64.bin \
               release/u-boot-whisplay-rpi-arm64.bin.sha256 \
+              release/logo_lcd_240_280_rgb565.bmp \
+              release/logo_lcd_240_280_rgb565.bmp.sha256 \
               --title "Whisplay U-Boot ${GITHUB_REF_NAME}" \
               --notes-file release/RELEASE_NOTES.md
           fi
