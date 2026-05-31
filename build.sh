@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UBOOT_VERSION="v2026.07-rc2"
-UBOOT_REPO="https://source.denx.de/u-boot/u-boot.git"
+UBOOT_VERSION="v2024.04"
+UBOOT_REPO="https://github.com/u-boot/u-boot.git"
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 JOBS="${JOBS:-$(nproc)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/u-boot"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 
-# Default: generic build for all Pi models (3/Zero2W/4/CM4)
+# Default: generic build for all Pi models (3/Zero2W/4/CM4/5/CM5)
 DEFCONFIG="${DEFCONFIG:-whisplay_rpi_arm64_defconfig}"
 
 echo "=== Whisplay U-Boot Build ==="
@@ -47,6 +47,14 @@ if ! grep -q 'cmd_show_logo' "${BUILD_DIR}/cmd/Makefile"; then
     echo 'obj-y += cmd_show_logo.o' >> "${BUILD_DIR}/cmd/Makefile"
 fi
 
+if [ -d "${SCRIPT_DIR}/patches" ]; then
+    for p in "${SCRIPT_DIR}/patches/"*.patch; do
+        [ -f "$p" ] || continue
+        echo "Applying $(basename "$p")..."
+        patch -p1 -N < "$p" || true
+    done
+fi
+
 echo "Configuring (${DEFCONFIG})..."
 cd "${BUILD_DIR}"
 make "${DEFCONFIG}" CROSS_COMPILE="${CROSS_COMPILE}"
@@ -71,4 +79,6 @@ echo "Deploy to Pi:"
 echo "  sudo cp ${OUTPUT_DIR}/${OUTPUT_NAME} /boot/firmware/"
 echo "  sudo cp logo_lcd_240_280_rgb565.bmp /boot/firmware/"
 echo "  Add to /boot/firmware/config.txt:"
+echo "    enable_uart=1"
+echo "    uart_2ndstage=1"
 echo "    kernel=${OUTPUT_NAME}"

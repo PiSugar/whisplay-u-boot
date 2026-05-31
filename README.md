@@ -8,14 +8,16 @@ Custom U-Boot build for [Whisplay HAT](https://github.com/PiSugar/Whisplay) that
 - Raspberry Pi 3 Model B/B+ (BCM2837)
 - Raspberry Pi 4 Model B (BCM2711)
 - Raspberry Pi CM4 (BCM2711)
-- Raspberry Pi 5 (BCM2712 + RP1)
-- Raspberry Pi CM5 (BCM2712 + RP1)
+- Raspberry Pi 5 (BCM2712) — boot supported, logo display pending RP1 PCIe upstreaming
+- Raspberry Pi CM5 (BCM2712) — boot supported, logo display pending RP1 PCIe upstreaming
 
 ## What It Does
 
 1. Pi firmware loads U-Boot instead of the kernel directly
 2. U-Boot displays `logo_lcd_240_280_rgb565.bmp` from the boot partition on the Whisplay SPI LCD (ST7789, 240×280)
 3. U-Boot then boots the Linux kernel normally
+
+On Pi 5/CM5, logo display is gracefully skipped (RP1 SPI driver not yet available in mainline U-Boot). Boot proceeds normally.
 
 If the BMP file is not present on the boot partition, U-Boot skips logo display entirely — no GPIO or SPI pins are touched, and boot proceeds normally.
 
@@ -27,7 +29,7 @@ If the BMP file is not present on the boot partition, U-Boot skips logo display 
 sudo apt-get install gcc-aarch64-linux-gnu make git bison flex libssl-dev
 ```
 
-### Build (generic, supports Pi 3/Zero2W/4/CM4)
+### Build (generic, supports all Pi models)
 
 ```bash
 git clone https://github.com/PiSugar/whisplay-u-boot.git
@@ -58,13 +60,15 @@ sudo cp output/u-boot-whisplay-rpi-arm64.bin /boot/firmware/
 sudo cp logo_lcd_240_280_rgb565.bmp /boot/firmware/
 ```
 
-2. Edit `/boot/firmware/config.txt`, add at the top:
+2. Edit `/boot/firmware/config.txt`, add:
 
-```
+```ini
+enable_uart=1
+uart_2ndstage=1
 kernel=u-boot-whisplay-rpi-arm64.bin
 ```
 
-3. Reboot. The logo should appear within ~500ms of power-on.
+3. Reboot. The logo should appear within ~500ms of power-on (Pi 3/4/Zero2W).
 
 ## Boot Logo BMP Requirements
 
@@ -75,13 +79,16 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 
 ## How It Works
 
+- Based on **U-Boot v2024.04** (first version with confirmed Pi 5 support)
 - Uses **direct SPI register access** (no U-Boot DM/DTS dependency) for maximum reliability
 - Auto-detects SoC via ARM MIDR register:
-  - Cortex-A53 → BCM2837 (peripheral base `0x3F000000`)
-  - Cortex-A72 → BCM2711 (peripheral base `0xFE000000`)
-  - Cortex-A76 → BCM2712 (RP1 via PCIe BAR at `0x1F00000000`)
-- SPI clock: core_clk / 4 (≈62.5 MHz on Pi 3/Zero2W, ≈125 MHz on Pi 4, ≈50 MHz on Pi 5)
-- Pi 5/CM5: uses RP1 DesignWare DW_apb_ssi SPI + RIO GPIO via PCIe-mapped registers
+  - Cortex-A53 (0xD03) → BCM2837 (peripheral base `0x3F000000`)
+  - Cortex-A72 (0xD08) → BCM2711 (peripheral base `0xFE000000`)
+  - Cortex-A76 (0xD0B) → BCM2712 (skip logo, RP1 SPI not yet supported)
+- SPI clock: core_clk / 4 (≈62.5 MHz on Pi 3/Zero2W, ≈125 MHz on Pi 4)
+- Custom BOOTCOMMAND handles both Pi 5 (`kernel_2712.img`) and Pi 3/4 (`kernel8.img`)
+- `CONFIG_BOOTDELAY=-2` prevents hang on Pi 5 (UART RX floating issue)
+- `kernel_comp_addr_r`/`kernel_comp_size` set for gzip-compressed kernel images
 - Does **not** set `bootargs` — preserves firmware DTB cmdline (no hardcoded PARTUUID)
 - GPIO pin mapping (BCM numbering):
   - DC: GPIO 27
@@ -94,7 +101,7 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 ```
 ├── build.sh                  # Automated build script
 ├── cmd/
-│   └── cmd_show_logo.c      # U-Boot show_logo command (BCM2837/2711/2712+RP1)
+│   └── cmd_show_logo.c      # U-Boot show_logo command (BCM2837/2711)
 ├── configs/
 │   ├── whisplay_rpi_arm64_defconfig  # Generic (Pi 3/Zero2W/4/CM4/5/CM5)
 │   └── whisplay_zero2w_defconfig     # Pi Zero 2W specific (embedded DTB)
@@ -106,13 +113,19 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 
 ## Reverting to Normal Boot
 
-Remove or comment out the `kernel=` line in `/boot/firmware/config.txt`:
+Remove or comment out the `kernel=` and `uart_2ndstage=` lines in `/boot/firmware/config.txt`:
 
 ```
-# kernel=u-boot-whisplay-zero2w.bin
+# kernel=u-boot-whisplay-rpi-arm64.bin
+# uart_2ndstage=1
 ```
+
+## Known Issues
+
+- **Pi 5/CM5**: Logo display not yet supported (RP1 SPI/GPIO requires PCIe driver patches not yet in mainline U-Boot). Boot works normally.
+- **Pi 5/CM5**: Boot takes ~10s longer due to `pci enum` timeout in PREBOOT.
 
 ## License
 
-- `cmd_show_logo.c`: MIT (based on M5Stack code)
+- `cmd_show_logo.c`: GPL-2.0+
 - U-Boot: GPL-2.0+

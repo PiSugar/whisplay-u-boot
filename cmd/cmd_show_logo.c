@@ -9,9 +9,10 @@
  *
  * If no BMP file found, skips silently without affecting boot.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPL-2.0+
  */
 
+#include <linux/types.h>
 #include <bmp_layout.h>
 #include <command.h>
 #include <env.h>
@@ -52,12 +53,19 @@ enum whisplay_platform {
 #define RP1_SYS_RIO0_OFFSET     0x0E0000
 #define RP1_PADS_BANK0_OFFSET   0x0F0000
 #define RP1_SPI0_OFFSET         0x050000
+#define RP1_SYSINFO_OFFSET      0x000000
+#define RP1_CHIP_ID             0x20001927
+#define RP1_CHIP_ID_MASK        0xFFFF0000
+
+#define SPI_POLL_MAX            1000000
 
 /* RP1 GPIO CTRL register: FUNCSEL in bits [4:0] */
 #define RP1_GPIO_CTRL(pin)      (8 * (pin) + 4)
 #define RP1_FUNCSEL_SPI0        0   /* a0 = SPI0 */
 #define RP1_FUNCSEL_SYS_RIO     5   /* a5 = SYS_RIO */
 #define RP1_FUNCSEL_NULL        31
+#define RP1_CTRL_MASK_FUNCSEL   0x1F
+#define RP1_PADS_MASK_OUTPUT    (RP1_PAD_OD | RP1_PAD_IE)
 
 /* RP1 RIO: output register with atomic SET/CLR */
 #define RP1_RIO_OUT             0x00
@@ -92,6 +100,10 @@ enum whisplay_platform {
 #define DW_SPI_SR_RFNE          (1 << 3)
 
 /* ===== Whisplay hardware definitions ===== */
+/* Whisplay RGB LED (BCM/RP1 GPIO numbers) */
+#define WHISPLAY_GPIO_LED_R     23
+#define WHISPLAY_GPIO_LED_G     25
+#define WHISPLAY_GPIO_LED_B     24
 #define WHISPLAY_GPIO_RST       4
 #define WHISPLAY_GPIO_BL        22
 #define WHISPLAY_GPIO_DC        27
@@ -116,9 +128,9 @@ static enum whisplay_platform detect_platform(void)
 	unsigned int part = (midr >> 4) & 0xFFF;
 
 	switch (part) {
-	case 0xD03: return PLATFORM_BCM2837;
-	case 0xD08: return PLATFORM_BCM2711;
-	case 0xD4F: return PLATFORM_BCM2712; /* Cortex-A76 r4p1 */
+	case 0xD03: return PLATFORM_BCM2837;  /* Cortex-A53: Pi 3, Zero 2W */
+	case 0xD08: return PLATFORM_BCM2711;  /* Cortex-A72: Pi 4, CM4 */
+	case 0xD0B: return PLATFORM_BCM2712;  /* Cortex-A76: Pi 5, CM5 */
 	default:
 		printf("[show_logo] Unknown SoC (MIDR part=0x%03x), skip\n", part);
 		return PLATFORM_UNKNOWN;
@@ -153,22 +165,24 @@ static void bcm_gpio_out(int pin, int val)
 		writel(1 << pin, gpio_base + BCM_GPCLR0);
 }
 
-/* ===== RP1 GPIO ===== */
+/* ===== RP1 GPIO (RP2040-style atomic aliases) ===== */
 static void rp1_gpio_set_funcsel(int pin, int funcsel)
 {
-	writel(funcsel & 0x1F, gpio_base + RP1_GPIO_CTRL(pin));
+	void __iomem *ctrl = gpio_base + RP1_GPIO_CTRL(pin);
+
+	writel(RP1_CTRL_MASK_FUNCSEL, ctrl + RP1_RIO_CLR_OFFSET);
+	writel(funcsel & RP1_CTRL_MASK_FUNCSEL, ctrl + RP1_RIO_SET_OFFSET);
 }
 
 static void rp1_gpio_set_output(int pin)
 {
-	/* Configure pad: enable output, 8mA drive, fast slew */
-	uint32_t pad = RP1_PAD_IE | RP1_PAD_DRIVE_8MA | RP1_PAD_SLEWFAST;
-	writel(pad, pads_base + RP1_PAD_GPIO(pin));
+	void __iomem *pad = pads_base + RP1_PAD_GPIO(pin);
 
-	/* Set function to SYS_RIO */
+	/* Enable pad output: clear OD[7] and IE[6] via atomic clr */
+	writel(RP1_PAD_DRIVE_8MA | RP1_PAD_SLEWFAST, pad);
+	writel(RP1_PADS_MASK_OUTPUT, pad + RP1_RIO_CLR_OFFSET);
+
 	rp1_gpio_set_funcsel(pin, RP1_FUNCSEL_SYS_RIO);
-
-	/* Enable output in RIO */
 	writel(1 << pin, rio_base + RP1_RIO_OE + RP1_RIO_SET_OFFSET);
 }
 
@@ -212,11 +226,15 @@ static void bcm_spi_init(void)
 
 static void bcm_spi_transfer(const uint8_t *tx, size_t len)
 {
+	unsigned long loops = 0;
+	size_t tx_count = 0, rx_count = 0;
+
 	writel(BCM_SPI_CS_CLEAR_TX | BCM_SPI_CS_CLEAR_RX | BCM_SPI_CS_TA,
 	       spi_base + BCM_SPI_CS);
 
-	size_t tx_count = 0, rx_count = 0;
 	while (rx_count < len) {
+		if (++loops > SPI_POLL_MAX)
+			return;
 		uint32_t cs = readl(spi_base + BCM_SPI_CS);
 		if ((cs & BCM_SPI_CS_TXD) && tx_count < len) {
 			writel(tx[tx_count], spi_base + BCM_SPI_FIFO);
@@ -227,61 +245,41 @@ static void bcm_spi_transfer(const uint8_t *tx, size_t len)
 			rx_count++;
 		}
 	}
-	while (!(readl(spi_base + BCM_SPI_CS) & BCM_SPI_CS_DONE))
-		;
+	loops = 0;
+	while (!(readl(spi_base + BCM_SPI_CS) & BCM_SPI_CS_DONE)) {
+		if (++loops > SPI_POLL_MAX)
+			return;
+	}
 	writel(0, spi_base + BCM_SPI_CS);
 }
 
 /* ===== RP1 DW_apb_ssi SPI ===== */
 static void rp1_spi_init(void)
 {
-	/* Set GPIO 8-11 to SPI0 function (a0) */
-	rp1_gpio_set_funcsel(8, RP1_FUNCSEL_SPI0);
-	rp1_gpio_set_funcsel(9, RP1_FUNCSEL_SPI0);
-	rp1_gpio_set_funcsel(10, RP1_FUNCSEL_SPI0);
-	rp1_gpio_set_funcsel(11, RP1_FUNCSEL_SPI0);
+	/* SPI0 on GPIO 8-11 (funcsel = 0) */
+	for (int pin = 8; pin <= 11; pin++)
+		rp1_gpio_set_funcsel(pin, RP1_FUNCSEL_SPI0);
 
-	/* Configure pads for SPI pins: enable output + input, 8mA, fast slew */
-	for (int pin = 8; pin <= 11; pin++) {
-		uint32_t pad = RP1_PAD_IE | RP1_PAD_DRIVE_8MA | RP1_PAD_SLEWFAST;
-		writel(pad, pads_base + RP1_PAD_GPIO(pin));
-	}
-
-	/* Disable SSI to configure */
 	writel(0, spi_base + DW_SPI_SSIENR);
-
-	/*
-	 * CTRLR0: 8-bit frame (DFS=7), SPI mode 0, TX&RX mode
-	 * Bits [3:0]=DFS=7, [5:4]=FRF=0 (Motorola), [7:6]=SCPOL/SCPH=0,
-	 * [9:8]=TMOD=0 (TX&RX)
-	 */
 	writel(0x0007, spi_base + DW_SPI_CTRLR0);
-
-	/* Baud rate: clk_sys(200MHz) / 4 = 50MHz */
-	writel(4, spi_base + DW_SPI_BAUDR);
-
-	/* TX FIFO threshold */
+	writel(10, spi_base + DW_SPI_BAUDR); /* 200MHz / 10 = 20MHz */
 	writel(0, spi_base + DW_SPI_TXFTLR);
 	writel(0, spi_base + DW_SPI_RXFTLR);
-
-	/* Enable slave 0 (CE0) */
 	writel(1, spi_base + DW_SPI_SER);
-
-	/* Enable SSI */
 	writel(1, spi_base + DW_SPI_SSIENR);
 }
 
 static void rp1_spi_transfer(const uint8_t *tx, size_t len)
 {
-	/*
-	 * DW_apb_ssi manages CS automatically while SSIENR=1 and SER is set.
-	 * We disable/re-enable per transfer to get clean CS edges.
-	 */
+	unsigned long loops = 0;
+	size_t tx_idx = 0, rx_idx = 0;
+
 	writel(0, spi_base + DW_SPI_SSIENR);
 	writel(1, spi_base + DW_SPI_SSIENR);
 
-	size_t tx_idx = 0, rx_idx = 0;
 	while (rx_idx < len) {
+		if (++loops > SPI_POLL_MAX)
+			return;
 		uint32_t sr = readl(spi_base + DW_SPI_SR);
 		if ((sr & DW_SPI_SR_TFNF) && tx_idx < len) {
 			writel(tx[tx_idx], spi_base + DW_SPI_DR);
@@ -292,9 +290,11 @@ static void rp1_spi_transfer(const uint8_t *tx, size_t len)
 			rx_idx++;
 		}
 	}
-	/* Wait for not busy */
-	while (readl(spi_base + DW_SPI_SR) & DW_SPI_SR_BUSY)
-		;
+	loops = 0;
+	while (readl(spi_base + DW_SPI_SR) & DW_SPI_SR_BUSY) {
+		if (++loops > SPI_POLL_MAX)
+			return;
+	}
 }
 
 /* ===== Unified SPI abstraction ===== */
@@ -398,6 +398,29 @@ static void lcd_draw_pixels(const uint8_t *buf, uint32_t len)
 }
 
 /* ===== Hardware initialization ===== */
+static void status_led_init(void)
+{
+	if (platform != PLATFORM_BCM2712)
+		return;
+
+	gpio_init_output(WHISPLAY_GPIO_LED_R);
+	gpio_init_output(WHISPLAY_GPIO_LED_G);
+	gpio_init_output(WHISPLAY_GPIO_LED_B);
+	gpio_set(WHISPLAY_GPIO_LED_R, 0);
+	gpio_set(WHISPLAY_GPIO_LED_G, 0);
+	gpio_set(WHISPLAY_GPIO_LED_B, 0);
+}
+
+static void status_led_set(int r, int g, int b)
+{
+	if (platform != PLATFORM_BCM2712)
+		return;
+
+	gpio_set(WHISPLAY_GPIO_LED_R, r);
+	gpio_set(WHISPLAY_GPIO_LED_G, g);
+	gpio_set(WHISPLAY_GPIO_LED_B, b);
+}
+
 static int hw_init_peripherals(void)
 {
 	if (platform == PLATFORM_BCM2712) {
@@ -427,14 +450,21 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	if (platform == PLATFORM_UNKNOWN)
 		return CMD_RET_SUCCESS;
 
-	/* Load BMP before touching any hardware */
+	/* Pi 5: init RP1 GPIO early so status LED confirms MMIO works */
+	if (platform == PLATFORM_BCM2712) {
+		if (hw_init_peripherals() < 0)
+			return CMD_RET_SUCCESS;
+		status_led_init();
+		status_led_set(1, 0, 0); /* red: RP1 mapped */
+	}
+
 	result = run_command(
-		"fatload mmc 0:1 ${kernel_addr_r} /logo_lcd_240_280_rgb565.bmp",
+		"fatload mmc 0:1 ${loadaddr} /logo_lcd_240_280_rgb565.bmp",
 		0);
 	if (result != 0)
 		return CMD_RET_SUCCESS;
 
-	char *addr_str = env_get("kernel_addr_r");
+	char *addr_str = env_get("loadaddr");
 	if (!addr_str)
 		return CMD_RET_SUCCESS;
 
@@ -476,7 +506,7 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	}
 
 	/* Initialize hardware only after BMP is confirmed valid */
-	if (hw_init_peripherals() < 0)
+	if (platform != PLATFORM_BCM2712 && hw_init_peripherals() < 0)
 		goto out;
 
 	gpio_init_output(WHISPLAY_GPIO_DC);
@@ -493,6 +523,8 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	lcd_draw_pixels((const uint8_t *)pixels, pixel_count * 2);
 
 	gpio_set(WHISPLAY_GPIO_BL, 0);
+	if (platform == PLATFORM_BCM2712)
+		status_led_set(0, 0, 1); /* green: logo done */
 
 out:
 	if (pixel_buf)
