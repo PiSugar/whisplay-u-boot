@@ -39,22 +39,6 @@ cp "${SCRIPT_DIR}/cmd/cmd_show_logo.c" "${BUILD_DIR}/cmd/"
 cp "${SCRIPT_DIR}/configs/"*.defconfig "${BUILD_DIR}/configs/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/configs/"*_defconfig "${BUILD_DIR}/configs/" 2>/dev/null || true
 
-if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ] && \
-   [ -d "${BUILD_DIR}/dts/upstream/src/arm/broadcom" ]; then
-    cp "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" \
-       "${BUILD_DIR}/dts/upstream/src/arm/broadcom/bcm2837-rpi-zero-2-w.dts"
-fi
-
-if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ] && \
-   [ -d "${BUILD_DIR}/arch/arm/dts" ]; then
-    cp "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" \
-       "${BUILD_DIR}/arch/arm/dts/bcm2837-rpi-zero-2-w.dts"
-    if ! grep -q 'bcm2837-rpi-zero-2-w.dtb' "${BUILD_DIR}/arch/arm/dts/Makefile"; then
-        perl -0pi -e 's/(\tbcm2837-rpi-cm3-io3\.dtb \\\n)/$1\tbcm2837-rpi-zero-2-w.dtb \\\n/' \
-             "${BUILD_DIR}/arch/arm/dts/Makefile"
-    fi
-fi
-
 if ! grep -q 'cmd_show_logo' "${BUILD_DIR}/cmd/Makefile"; then
     echo 'obj-y += cmd_show_logo.o' >> "${BUILD_DIR}/cmd/Makefile"
 fi
@@ -82,9 +66,6 @@ make -j"${JOBS}" CROSS_COMPILE="${CROSS_COMPILE}"
 mkdir -p "${OUTPUT_DIR}"
 
 OUTPUT_NAME="u-boot-whisplay-rpi-arm64.bin"
-if [[ "${DEFCONFIG}" == *"zero2w"* ]]; then
-    OUTPUT_NAME="u-boot-whisplay-zero2w.bin"
-fi
 
 cp "${BUILD_DIR}/u-boot.bin" "${OUTPUT_DIR}/${OUTPUT_NAME}"
 

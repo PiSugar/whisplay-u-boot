@@ -37,12 +37,6 @@ bash build.sh
 
 The output binary is at `output/u-boot-whisplay-rpi-arm64.bin`.
 
-### Build for a specific board (Pi Zero 2W only, with embedded DTB)
-
-```bash
-DEFCONFIG=whisplay_zero2w_defconfig bash build.sh
-```
-
 ### Native compile on aarch64 Pi
 
 ```bash
@@ -122,12 +116,9 @@ kernel=u-boot-whisplay-rpi-arm64.bin
 ```
 ├── build.sh                  # Automated build script
 ├── cmd/
-│   └── cmd_show_logo.c      # U-Boot show_logo command (BCM2837/2711)
+│   └── cmd_show_logo.c      # U-Boot show_logo command
 ├── configs/
-│   ├── whisplay_rpi_arm64_defconfig  # Generic (Pi 3/Zero2W/4/CM4/5/CM5)
-│   └── whisplay_zero2w_defconfig     # Pi Zero 2W specific (embedded DTB)
-├── dts-patches/
-│   └── bcm2837-rpi-zero-2-w.dts  # Modified DTS (for zero2w_defconfig only)
+│   └── whisplay_rpi_arm64_defconfig  # Unified Pi 3/Zero2W/4/CM4/5/CM5 build
 └── output/                   # Build output (generated)
     └── u-boot-whisplay-rpi-arm64.bin
 ```
