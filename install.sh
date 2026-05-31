@@ -98,7 +98,7 @@ download_with_fallback() {
 if [[ -n "${BIN_URL:-}" ]]; then
     bin_url="${BIN_URL}"
 elif [[ "${VERSION}" == "latest" ]]; then
-    bin_url="https://github.com/${REPO}/releases/download/latest/${ASSET}"
+    bin_url="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 else
     bin_url="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 fi
@@ -106,7 +106,7 @@ fi
 if [[ -n "${LOGO_URL:-}" ]]; then
     logo_url="${LOGO_URL}"
 elif [[ "${VERSION}" == "latest" ]]; then
-    logo_url="https://github.com/${REPO}/releases/download/latest/${LOGO_ASSET}"
+    logo_url="https://github.com/${REPO}/releases/latest/download/${LOGO_ASSET}"
 else
     logo_url="https://github.com/${REPO}/releases/download/${VERSION}/${LOGO_ASSET}"
 fi
