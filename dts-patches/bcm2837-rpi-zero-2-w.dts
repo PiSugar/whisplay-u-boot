@@ -6,9 +6,7 @@
 /dts-v1/;
 #include "bcm2837.dtsi"
 #include "bcm2836-rpi.dtsi"
-#include "bcm283x-rpi-led-deprecated.dtsi"
 #include "bcm283x-rpi-usb-otg.dtsi"
-#include "bcm283x-rpi-wifi-bt.dtsi"
 
 / {
 	compatible = "raspberrypi,model-zero-2-w", "brcm,bcm2837";
@@ -23,10 +21,11 @@
 		/* 8250 auxiliary UART instead of pl011 */
 		stdout-path = "serial1:115200n8";
 	};
-};
 
-&bt {
-	shutdown-gpios = <&gpio 42 GPIO_ACTIVE_HIGH>;
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&gpio 41 GPIO_ACTIVE_LOW>;
+	};
 };
 
 &gpio {
@@ -105,7 +104,7 @@
 	status = "okay";
 };
 
-&led_act {
+&{/leds/led-act} {
 	gpios = <&gpio 29 GPIO_ACTIVE_LOW>;
 };
 
@@ -139,8 +138,4 @@
 	num-chipselects = <1>;
 	status = "okay";
 
-};
-
-&wifi_pwrseq {
-	reset-gpios = <&gpio 41 GPIO_ACTIVE_LOW>;
 };

@@ -240,6 +240,9 @@ static void rp1_capture_gpio_diag(const char *prefix, int pin)
 {
 	char name[32];
 
+	if (platform != PLATFORM_BCM2712)
+		return;
+
 	snprintf(name, sizeof(name), "%s_ctrl", prefix);
 	env_set_hex32(name, readl(gpio_base + RP1_GPIO_CTRL(pin)));
 	snprintf(name, sizeof(name), "%s_pad", prefix);
@@ -249,6 +252,9 @@ static void rp1_capture_gpio_diag(const char *prefix, int pin)
 static void rp1_capture_rio_diag(const char *suffix)
 {
 	char name[32];
+
+	if (platform != PLATFORM_BCM2712)
+		return;
 
 	snprintf(name, sizeof(name), "whisplay_rio_out_%s", suffix);
 	env_set_hex32(name, readl(rio_base + RP1_RIO_OUT));
@@ -461,9 +467,6 @@ static void lcd_draw_pixels(const uint8_t *buf, uint32_t len)
 /* ===== Hardware initialization ===== */
 static void status_led_init(void)
 {
-	if (platform != PLATFORM_BCM2712)
-		return;
-
 	gpio_init_output(WHISPLAY_GPIO_LED_R);
 	gpio_init_output(WHISPLAY_GPIO_LED_G);
 	gpio_init_output(WHISPLAY_GPIO_LED_B);
@@ -474,9 +477,6 @@ static void status_led_init(void)
 
 static void status_led_set(int r, int g, int b)
 {
-	if (platform != PLATFORM_BCM2712)
-		return;
-
 	gpio_set(WHISPLAY_GPIO_LED_R, !r);
 	gpio_set(WHISPLAY_GPIO_LED_G, !g);
 	gpio_set(WHISPLAY_GPIO_LED_B, !b);
@@ -514,6 +514,20 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	whisplay_mark_ms("whisplay_t_start", t0);
 
 	platform = detect_platform();
+	switch (platform) {
+	case PLATFORM_BCM2837:
+		env_set("whisplay_platform", "bcm2837");
+		break;
+	case PLATFORM_BCM2711:
+		env_set("whisplay_platform", "bcm2711");
+		break;
+	case PLATFORM_BCM2712:
+		env_set("whisplay_platform", "bcm2712");
+		break;
+	default:
+		env_set("whisplay_platform", "unknown");
+		break;
+	}
 	whisplay_mark_ms("whisplay_t_detect", t0);
 	if (platform == PLATFORM_UNKNOWN)
 		return CMD_RET_SUCCESS;
@@ -595,6 +609,13 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	if (platform != PLATFORM_BCM2712 && hw_init_peripherals() < 0)
 		goto out;
 
+	if (platform != PLATFORM_BCM2712) {
+		env_set("whisplay_hw_marker", "1");
+		whisplay_mark_ms("whisplay_t_hw", t0);
+		status_led_init();
+		status_led_set(1, 0, 0); /* red: GPIO mapped */
+	}
+
 	gpio_init_output(WHISPLAY_GPIO_DC);
 	gpio_init_output(WHISPLAY_GPIO_RST);
 	gpio_init_output(WHISPLAY_GPIO_BL);
@@ -616,8 +637,7 @@ int custom_show_logo(struct cmd_tbl *cmdtp, int flag, int argc,
 	env_set("whisplay_logo_done_marker", "1");
 	whisplay_mark_ms("whisplay_t_done", t0);
 
-	if (platform == PLATFORM_BCM2712)
-		status_led_set(0, 1, 0); /* green: logo done */
+	status_led_set(0, 1, 0); /* green: logo done */
 
 out:
 	if (pixels)

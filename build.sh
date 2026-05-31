@@ -45,6 +45,16 @@ if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ] && \
        "${BUILD_DIR}/dts/upstream/src/arm/broadcom/bcm2837-rpi-zero-2-w.dts"
 fi
 
+if [ -f "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" ] && \
+   [ -d "${BUILD_DIR}/arch/arm/dts" ]; then
+    cp "${SCRIPT_DIR}/dts-patches/bcm2837-rpi-zero-2-w.dts" \
+       "${BUILD_DIR}/arch/arm/dts/bcm2837-rpi-zero-2-w.dts"
+    if ! grep -q 'bcm2837-rpi-zero-2-w.dtb' "${BUILD_DIR}/arch/arm/dts/Makefile"; then
+        perl -0pi -e 's/(\tbcm2837-rpi-cm3-io3\.dtb \\\n)/$1\tbcm2837-rpi-zero-2-w.dtb \\\n/' \
+             "${BUILD_DIR}/arch/arm/dts/Makefile"
+    fi
+fi
+
 if ! grep -q 'cmd_show_logo' "${BUILD_DIR}/cmd/Makefile"; then
     echo 'obj-y += cmd_show_logo.o' >> "${BUILD_DIR}/cmd/Makefile"
 fi
